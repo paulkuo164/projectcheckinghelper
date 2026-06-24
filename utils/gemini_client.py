@@ -137,25 +137,23 @@ def generate_reply_letter(
 def review_plan(doc_text: str, standard: dict, api_key: str) -> dict:
     """
     呼叫 Gemini API，依據審核標準對計畫書文字進行審核。
+    輸出：每個審核項目的問題條列（頁碼 + 問題描述），選填分數。
     支援大量審核項目：每批最多 15 項，分批送審後合併結果。
     """
     criteria_all = standard.get("criteria", [])
-    max_total = sum(c.get("max_score", 0) for c in criteria_all)
     BATCH_SIZE = 15
 
     all_items = []
     all_missing = []
 
-    # 分批審核
     for batch_start in range(0, len(criteria_all), BATCH_SIZE):
         batch = criteria_all[batch_start: batch_start + BATCH_SIZE]
         criteria_text = "\n".join([
-            f"- 【{c['name']}】（滿分 {c['max_score']} 分）：{c.get('description', '')}"
+            f"- 【{c['name']}】：{c.get('description', '')}"
             for c in batch
         ])
-        batch_max = sum(c.get("max_score", 0) for c in batch)
 
-        prompt = f"""你是一位專業的計畫書審查委員。請依照以下審核項目，仔細審查計畫書內容，輸出 JSON 格式的審核結果。
+        prompt = f"""你是一位專業的計畫書審查委員。請依照以下審核項目，逐條審查計畫書內容。
 
 ## 審核標準：{standard['name']}
 {standard.get('description', '')}
@@ -165,7 +163,7 @@ def review_plan(doc_text: str, standard: dict, api_key: str) -> dict:
 
 ---
 
-## 計畫書內容：
+## 計畫書內容（含頁碼標記）：
 {doc_text[:20000]}
 
 ---
@@ -174,18 +172,28 @@ def review_plan(doc_text: str, standard: dict, api_key: str) -> dict:
 {{
   "items": [
     {{
-      "criterion": "<項目名稱，與上方完全一致>",
-      "score": <整數得分，0 到該項 max_score 之間>,
-      "max_score": <該項滿分>,
-      "passed": <true | false>,
-      "comment": "<審核說明，具體指出符合或缺漏之處>",
-      "missing": "<缺漏內容描述，如無則為 null>"
+      "criterion": "<審核項目名稱，與上方完全一致>",
+      "status": "<符合 | 部分符合 | 不符合 | 無法判斷>",
+      "score": <選填，整數，若不需評分請填 null>,
+      "max_score": <該項滿分，若不需評分請填 null>,
+      "issues": [
+        {{
+          "page": "<第 N 頁，若無法對應頁碼則填「全文」>",
+          "location": "<段落標題或關鍵字，幫助定位位置>",
+          "description": "<具體說明此處的問題或缺漏>"
+        }}
+      ],
+      "suggestion": "<改善建議，若無問題則填 null>"
     }}
   ],
-  "missing_items": ["<需補件事項，如無則空陣列>"]
+  "missing_items": ["<整體缺漏或需補件事項，如無則空陣列>"]
 }}
 
-注意：items 數量必須與本批次審核項目數量完全一致（{len(batch)} 筆），每項都必須給分。
+注意：
+1. items 數量必須與本批次審核項目數量完全一致（{len(batch)} 筆）
+2. 若該項目完全符合規定，issues 填空陣列 []，suggestion 填 null
+3. 頁碼請參考計畫書內容中的「=== 第 N 頁 ===」標記
+4. 每個問題獨立列為一筆 issues，不要合併描述
 """
 
         url = (
@@ -216,27 +224,32 @@ def review_plan(doc_text: str, standard: dict, api_key: str) -> dict:
         except Exception as e:
             return {"error": str(e)}
 
-    # 合併所有批次結果
-    total_score = sum(it.get("score", 0) for it in all_items)
-    passed_count = sum(1 for it in all_items if it.get("passed"))
-    pass_rate = round(passed_count / len(all_items) * 100) if all_items else 0
+    # 統計
+    total = len(all_items)
+    ok_count = sum(1 for it in all_items if it.get("status") == "符合")
+    partial_count = sum(1 for it in all_items if it.get("status") == "部分符合")
+    fail_count = sum(1 for it in all_items if it.get("status") == "不符合")
 
-    if pass_rate >= 80:
+    if fail_count == 0 and partial_count == 0:
         verdict = "通過"
-    elif pass_rate >= 60:
+    elif fail_count == 0:
         verdict = "待補件"
     else:
         verdict = "不通過"
 
-    # 去除重複補件項目
     seen = set()
     unique_missing = [m for m in all_missing if not (m in seen or seen.add(m))]
 
+    # 分數（若有填）
+    scored_items = [it for it in all_items if it.get("score") is not None]
+    total_score = sum(it.get("score", 0) for it in scored_items)
+    max_score = sum(it.get("max_score", 0) for it in scored_items if it.get("max_score"))
+
     return {
-        "total_score": total_score,
-        "max_score": max_total,
         "verdict": verdict,
-        "recommendation": f"共 {len(all_items)} 項審核項目，{passed_count} 項通過（{pass_rate}%）。",
+        "summary": f"共 {total} 項審核項目｜符合 {ok_count} 項・部分符合 {partial_count} 項・不符合 {fail_count} 項",
+        "total_score": total_score if scored_items else None,
+        "max_score": max_score if scored_items else None,
         "items": all_items,
         "missing_items": unique_missing,
     }
