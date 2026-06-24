@@ -139,47 +139,85 @@ if run and can_run:
     )
 
 # ── 結果顯示 ──────────────────────────────────────────────────────────────
-result      = st.session_state.get("review_result")
+result       = st.session_state.get("review_result")
 reply_letter = st.session_state.get("reply_letter")
 
 if result:
     st.success("審核完成！")
 
-    # 總覽指標
-    score     = result.get("total_score", 0)
-    max_score = result.get("max_score", 100)
-    verdict   = result.get("verdict", "待確認")
-    pass_rate = round(score / max_score * 100, 1) if max_score else 0
+    verdict = result.get("verdict", "待確認")
+    summary = result.get("summary", "")
 
-    m1, m2, m3 = st.columns([1, 1, 2])
-    with m1:
-        st.metric("總分", f"{score} / {max_score}", delta=verdict)
-    with m2:
-        st.metric("得分率", f"{pass_rate}%")
-    with m3:
-        st.info(f"**AI 建議：** {result.get('recommendation', '—')}")
+    # 總覽
+    verdict_color = {"通過": "✅", "待補件": "⚠️", "不通過": "❌"}.get(verdict, "📋")
+    st.markdown(f"### {verdict_color} 審核結論：{verdict}")
+    st.info(summary)
+
+    # 若有分數則顯示
+    if result.get("total_score") is not None:
+        s, ms = result["total_score"], result["max_score"]
+        st.caption(f"參考得分：{s} / {ms} 分（{round(s/ms*100,1) if ms else 0}%）")
 
     st.markdown("---")
 
-    # 分頁：審核細節 ／ 公文回覆
     tab_review, tab_letter = st.tabs(["📋 審核細節", "📨 公文回覆草稿"])
 
     with tab_review:
-        st.subheader("各審核項目")
-        for item in result.get("items", []):
-            icon = "✅" if item.get("passed") else "❌"
-            with st.expander(
-                f"{icon} {item['criterion']}　{item.get('score',0)} / {item.get('max_score',0)} 分",
-                expanded=not item.get("passed", True),
-            ):
-                st.write(item.get("comment", "—"))
-                if item.get("missing"):
-                    st.warning(f"缺漏：{item['missing']}")
+        items = result.get("items", [])
 
+        # 問題統計快覽
+        fail_items  = [it for it in items if it.get("status") == "不符合"]
+        part_items  = [it for it in items if it.get("status") == "部分符合"]
+        ok_items    = [it for it in items if it.get("status") == "符合"]
+        unk_items   = [it for it in items if it.get("status") == "無法判斷"]
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("❌ 不符合", len(fail_items))
+        c2.metric("⚠️ 部分符合", len(part_items))
+        c3.metric("✅ 符合", len(ok_items))
+        c4.metric("❓ 無法判斷", len(unk_items))
+
+        st.markdown("---")
+
+        # 優先顯示有問題的項目
+        def render_item(item):
+            status = item.get("status", "—")
+            icon = {"符合": "✅", "部分符合": "⚠️", "不符合": "❌", "無法判斷": "❓"}.get(status, "📋")
+            issues = item.get("issues", [])
+            issue_count = len(issues)
+            score_str = ""
+            if item.get("score") is not None:
+                score_str = f"　{item['score']}/{item.get('max_score',10)} 分"
+
+            with st.expander(
+                f"{icon} {item.get('criterion','—')}　{status}{score_str}　（{issue_count} 個問題）",
+                expanded=(status in ("不符合", "部分符合")),
+            ):
+                if not issues:
+                    st.success("此項目無問題，符合規定。")
+                else:
+                    for j, issue in enumerate(issues, 1):
+                        page    = issue.get("page", "—")
+                        loc     = issue.get("location", "")
+                        desc    = issue.get("description", "—")
+                        loc_str = f"｜{loc}" if loc else ""
+                        st.markdown(f"**問題 {j}｜{page}{loc_str}**")
+                        st.warning(desc)
+
+                suggestion = item.get("suggestion")
+                if suggestion:
+                    st.info(f"💡 改善建議：{suggestion}")
+
+        # 先顯示不符合、部分符合，再顯示符合
+        for group in [fail_items, part_items, unk_items, ok_items]:
+            for item in group:
+                render_item(item)
+
+        # 補件清單
         missing_list = result.get("missing_items", [])
         if missing_list:
             st.markdown("---")
-            st.subheader("📌 待補件清單")
+            st.subheader("📌 整體待補件清單")
             for i, m in enumerate(missing_list, 1):
                 st.write(f"{i}. {m}")
 
@@ -191,25 +229,18 @@ if result:
         else:
             st.subheader("公文回覆草稿")
             st.caption("以下為 AI 產生草稿，請人工確認後再正式發文。")
-
-            # 可編輯的文字區
             edited = st.text_area(
                 "草稿內容（可直接編輯）",
                 value=reply_letter,
                 height=480,
                 key="letter_editor",
             )
-
-            col_copy, col_dl = st.columns(2)
-            with col_copy:
-                st.download_button(
-                    "⬇️ 下載草稿 (.txt)",
-                    data=edited.encode("utf-8"),
-                    file_name="公文回覆草稿.txt",
-                    mime="text/plain",
-                )
-            with col_dl:
-                st.caption("建議複製後貼入公文系統進行排版。")
+            st.download_button(
+                "⬇️ 下載草稿 (.txt)",
+                data=edited.encode("utf-8"),
+                file_name="公文回覆草稿.txt",
+                mime="text/plain",
+            )
 
 
 # ── 輔助函式 ──────────────────────────────────────────────────────────────
@@ -226,7 +257,8 @@ def _save_record(filename, standard, score, max_score, result):
         "score": score,
         "max_score": max_score,
         "verdict": result.get("verdict", ""),
-        "recommendation": result.get("recommendation", ""),
+        "summary": result.get("summary", ""),
     })
     with open(record_path, "w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
+
