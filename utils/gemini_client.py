@@ -203,7 +203,7 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
         return {"error": f"檔案上傳失敗：{e}"}
 
     criteria_all = standard.get("criteria", [])
-    BATCH_SIZE = 5
+    BATCH_SIZE = 3
 
     all_items = []
     all_missing = []
@@ -250,10 +250,10 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
 
 注意：
 1. items 數量必須與本批次審核項目數量完全一致（{len(batch)} 筆）
-2. 每個項目的 summary 必須填寫，說明判斷依據，不可留空
-3. evidence 無論通過或不通過都必須至少填寫 1 筆，通過時 type 填「符合」並引用文件中符合的具體內容與頁碼
+2. 每個項目的 summary 必須填寫，100字以內
+3. evidence 每項最多 3 筆，通過時 type 填「符合」，有問題時 type 填「問題」
 4. 頁碼請直接參考附件文件的實際頁碼
-5. 每筆 evidence 獨立列出，引用文件實際內容，不要泛泛而談
+5. description 每筆 50 字以內，精簡有力
 """
 
         url = (
@@ -271,7 +271,7 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
             "generationConfig": {
                 "temperature": 0.2,
                 "responseMimeType": "application/json",
-                "maxOutputTokens": 8192,
+                "maxOutputTokens": 16384,
             },
         }
 
