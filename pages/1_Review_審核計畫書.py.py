@@ -7,7 +7,7 @@ from utils.standards_loader import load_standards
 
 
 # ── 輔助函式（需在呼叫前定義）────────────────────────────────────────────────
-def _save_record(filename, standard, score, max_score, result):
+def _save_record(filename, standard, result):
     record_path = "standards/history.json"
     records = []
     if os.path.exists(record_path):
@@ -17,8 +17,6 @@ def _save_record(filename, standard, score, max_score, result):
         "timestamp": datetime.datetime.now().isoformat(),
         "filename": filename,
         "standard": standard,
-        "score": score,
-        "max_score": max_score,
         "verdict": result.get("verdict", ""),
         "summary": result.get("summary", ""),
     })
@@ -150,8 +148,6 @@ if run and can_run:
     _save_record(
         st.session_state.get("plan_name", "—"),
         selected_standard,
-        result.get("total_score"),
-        result.get("max_score"),
         result,
     )
 
@@ -168,11 +164,6 @@ if result:
 
     st.markdown(f"### {verdict_icon} 審核結論：{verdict}")
     st.info(summary)
-
-    if result.get("total_score") is not None:
-        s, ms = result["total_score"], result["max_score"]
-        st.caption(f"參考得分：{s} / {ms} 分（{round(s/ms*100,1) if ms else 0}%）")
-
     st.markdown("---")
 
     tab_review, tab_letter = st.tabs(["📋 審核細節", "📨 公文回覆草稿"])
