@@ -134,14 +134,73 @@ def generate_reply_letter(
         return f"[公文產生失敗] {e}"
 
 
+def _upload_file_to_gemini(file_bytes: bytes, file_mime: str, api_key: str) -> str:
+    """
+    透過 Gemini File API 上傳檔案，回傳 file_uri。
+    支援大型 PDF，不受 inline_data 大小限制。
+    """
+    import io
+
+    # Step 1：取得上傳 URL
+    start_url = (
+        f"https://generativelanguage.googleapis.com/upload/v1beta/files"
+        f"?key={api_key}&uploadType=resumable"
+    )
+    headers_init = {
+        "X-Goog-Upload-Protocol": "resumable",
+        "X-Goog-Upload-Command": "start",
+        "X-Goog-Upload-Header-Content-Type": file_mime,
+        "Content-Type": "application/json",
+    }
+    resp = requests.post(
+        start_url,
+        headers=headers_init,
+        json={"file": {"display_name": "plan_document"}},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    upload_url = resp.headers.get("X-Goog-Upload-URL")
+    if not upload_url:
+        raise ValueError("無法取得 File API 上傳 URL")
+
+    # Step 2：上傳檔案內容
+    resp2 = requests.post(
+        upload_url,
+        headers={
+            "Content-Type": file_mime,
+            "X-Goog-Upload-Command": "upload, finalize",
+            "X-Goog-Upload-Offset": "0",
+        },
+        data=file_bytes,
+        timeout=120,
+    )
+    resp2.raise_for_status()
+    file_info = resp2.json()
+    return file_info["file"]["uri"]
+
+
+def _delete_gemini_file(file_uri: str, api_key: str):
+    """審核完成後刪除已上傳的檔案。"""
+    # file_uri 格式：https://generativelanguage.googleapis.com/v1beta/files/xxx
+    file_name = file_uri.split("/v1beta/")[-1]  # files/xxx
+    url = f"https://generativelanguage.googleapis.com/v1beta/{file_name}?key={api_key}"
+    try:
+        requests.delete(url, timeout=15)
+    except Exception:
+        pass  # 刪除失敗不影響主流程
+
+
 def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str) -> dict:
     """
-    呼叫 Gemini API，直接傳入完整檔案（PDF/DOCX）進行審核。
-    不再做本地文字擷取，AI 可讀取完整文件內容與頁碼。
+    呼叫 Gemini API，透過 File API 上傳完整檔案後進行審核。
+    支援 100+ 頁的大型文件，不受 inline_data 大小限制。
     支援大量審核項目：每批最多 15 項，分批送審後合併結果。
     """
-    import base64
-    file_b64 = base64.b64encode(file_bytes).decode("utf-8")
+    # 先上傳檔案取得 URI
+    try:
+        file_uri = _upload_file_to_gemini(file_bytes, file_mime, api_key)
+    except Exception as e:
+        return {"error": f"檔案上傳失敗：{e}"}
 
     criteria_all = standard.get("criteria", [])
     BATCH_SIZE = 15
@@ -156,7 +215,7 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
             for c in batch
         ])
 
-        prompt = f"""你是一位專業的計畫書審查委員。請依照以下審核項目，逐條審查附件計畫書的完整內容。
+        prompt = f"""你是一位專業的計畫書審查委員。請依照以下審核項目，逐條審查附件計畫書的完整內容（包含所有頁面）。
 
 ## 審核標準：{standard['name']}
 {standard.get('description', '')}
@@ -202,12 +261,7 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
         payload = {
             "contents": [{
                 "parts": [
-                    {
-                        "inline_data": {
-                            "mime_type": file_mime,
-                            "data": file_b64,
-                        }
-                    },
+                    {"file_data": {"mime_type": file_mime, "file_uri": file_uri}},
                     {"text": prompt},
                 ]
             }],
@@ -226,11 +280,17 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
             all_items.extend(batch_result.get("items", []))
             all_missing.extend(batch_result.get("missing_items", []))
         except requests.exceptions.HTTPError as e:
+            _delete_gemini_file(file_uri, api_key)
             return {"error": f"API 錯誤（批次 {batch_start//BATCH_SIZE+1}）：{e.response.status_code} {e.response.text[:200]}"}
         except json.JSONDecodeError:
+            _delete_gemini_file(file_uri, api_key)
             return {"error": f"AI 回傳格式錯誤（批次 {batch_start//BATCH_SIZE+1}）。原始內容：{raw_text[:300]}"}
         except Exception as e:
+            _delete_gemini_file(file_uri, api_key)
             return {"error": str(e)}
+
+    # 審核完成，刪除已上傳的檔案
+    _delete_gemini_file(file_uri, api_key)
 
     # 統計
     total = len(all_items)
