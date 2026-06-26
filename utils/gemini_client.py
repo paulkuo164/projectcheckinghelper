@@ -215,7 +215,7 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
             for c in batch
         ])
 
-        prompt = f"""你是一位專業的計畫書審查委員。請依照以下審核項目，逐條審查附件計畫書的完整內容（包含所有頁面）。
+        prompt = f"""你是一位專業的計畫書審查委員。請依照以下審核項目，逐條審查附件計畫書的完整內容（包含所有頁面），並針對每個項目撰寫具體的審查意見。
 
 ## 審核標準：{standard['name']}
 {standard.get('description', '')}
@@ -233,14 +233,16 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
       "status": "<符合 | 部分符合 | 不符合 | 無法判斷>",
       "score": null,
       "max_score": null,
-      "issues": [
+      "summary": "<50~100字的審查總結，說明整體判斷依據，無論通過與否都必須填寫>",
+      "evidence": [
         {{
           "page": "<第 N 頁，若無法對應頁碼則填「全文」>",
-          "location": "<段落標題或關鍵字，幫助定位位置>",
-          "description": "<具體說明此處的問題或缺漏>"
+          "location": "<段落標題或關鍵字>",
+          "description": "<具體說明此處的內容如何符合或不符合該審核項目，引用文件中的實際內容>",
+          "type": "<符合 | 問題>"
         }}
       ],
-      "suggestion": "<改善建議，若無問題則填 null>"
+      "suggestion": "<具體改善建議，若完全符合則填 null>"
     }}
   ],
   "missing_items": ["<整體缺漏或需補件事項，如無則空陣列>"]
@@ -248,9 +250,10 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
 
 注意：
 1. items 數量必須與本批次審核項目數量完全一致（{len(batch)} 筆）
-2. 若該項目完全符合規定，issues 填空陣列 []，suggestion 填 null
-3. 頁碼請直接參考附件文件的實際頁碼
-4. 每個問題獨立列為一筆 issues，不要合併描述
+2. 每個項目的 summary 必須填寫，說明判斷依據，不可留空
+3. evidence 無論通過或不通過都必須至少填寫 1 筆，通過時 type 填「符合」並引用文件中符合的具體內容與頁碼
+4. 頁碼請直接參考附件文件的實際頁碼
+5. 每筆 evidence 獨立列出，引用文件實際內容，不要泛泛而談
 """
 
         url = (
