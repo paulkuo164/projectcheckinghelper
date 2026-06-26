@@ -106,8 +106,11 @@ with col_right:
             if st.button("💾 儲存為審核標準", type="primary"):
                 new_std = {"name": p_name, "description": p_desc, "criteria": edited_criteria}
                 standards.append(new_std)
-                save_standards(standards)
-                st.success(f"「{p_name}」已儲存！")
+                save_ok = save_standards(standards)
+                if save_ok:
+                    st.success(f"「{p_name}」已儲存並同步至 GitHub ✅")
+                else:
+                    st.warning(f"「{p_name}」已存本機，但 GitHub 同步失敗，請確認 Secrets 設定。")
                 st.session_state["editing_idx"] = None
                 st.session_state.pop("import_preview", None)
                 st.rerun()
@@ -158,14 +161,18 @@ with col_right:
                     standards.append(new_std)
                 else:
                     standards[idx] = new_std
-                save_standards(standards)
-                st.success("儲存成功！")
+                save_ok = save_standards(standards)
+                if save_ok:
+                    st.success("儲存成功並同步至 GitHub ✅")
+                else:
+                    st.warning("已存本機，但 GitHub 同步失敗，請確認 Secrets 設定。")
                 st.session_state["editing_idx"] = None
                 st.rerun()
         with col_del:
             if not is_new and st.button("🗑️ 刪除"):
                 standards.pop(idx)
                 save_standards(standards)
+                st.success("已刪除並同步至 GitHub ✅")
                 st.session_state["editing_idx"] = None
                 st.rerun()
 
