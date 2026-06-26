@@ -194,24 +194,47 @@ if result:
         def render_item(item):
             status = item.get("status", "—")
             icon   = {"符合": "✅", "部分符合": "⚠️", "不符合": "❌", "無法判斷": "❓"}.get(status, "📋")
-            issues = item.get("issues", [])
+            evidence = item.get("evidence", [])
+            issues   = [e for e in evidence if e.get("type") == "問題"]
+            conform  = [e for e in evidence if e.get("type") == "符合"]
+
             with st.expander(
-                f"{icon} {item.get('criterion','—')}　{status}　（{len(issues)} 個問題）",
+                f"{icon} {item.get('criterion','—')}　{status}　（{len(issues)} 個問題・{len(conform)} 個符合依據）",
                 expanded=(status in ("不符合", "部分符合")),
             ):
-                if not issues:
-                    st.success("此項目無問題，符合規定。")
-                else:
-                    for j, issue in enumerate(issues, 1):
-                        page = issue.get("page", "—")
-                        loc  = issue.get("location", "")
-                        desc = issue.get("description", "—")
+                # 審查總結
+                summary = item.get("summary")
+                if summary:
+                    st.markdown(f"**審查意見：** {summary}")
+                    st.markdown("---")
+
+                # 問題條列
+                if issues:
+                    st.markdown("**🔴 問題項目**")
+                    for j, ev in enumerate(issues, 1):
+                        page = ev.get("page", "—")
+                        loc  = ev.get("location", "")
+                        desc = ev.get("description", "—")
                         loc_str = f"｜{loc}" if loc else ""
                         st.markdown(f"**問題 {j}｜{page}{loc_str}**")
                         st.warning(desc)
+
+                # 符合依據
+                if conform:
+                    st.markdown("**🟢 符合依據**")
+                    for j, ev in enumerate(conform, 1):
+                        page = ev.get("page", "—")
+                        loc  = ev.get("location", "")
+                        desc = ev.get("description", "—")
+                        loc_str = f"｜{loc}" if loc else ""
+                        st.markdown(f"**依據 {j}｜{page}{loc_str}**")
+                        st.success(desc)
+
+                # 改善建議
                 suggestion = item.get("suggestion")
                 if suggestion:
                     st.info(f"💡 改善建議：{suggestion}")
+
 
         for group in [fail_items, part_items, unk_items, ok_items]:
             for item in group:
