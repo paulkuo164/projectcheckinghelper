@@ -7,7 +7,7 @@ def parse_standard_from_text(rule_text: str, api_key: str) -> dict:
     將條文式規則文字（Word/PDF 擷取）解析成結構化審核標準 JSON。
     回傳格式與 standards.json 的單筆標準相同。
     """
-    prompt = f"""你是一位熟悉台灣政府採購與工程審查的專業顧問。有20年的工程經驗。
+    prompt = f"""你是一位熟悉台灣政府採購與工程審查的專業顧問。工程經驗90年
 請閱讀以下審核規則文件，將其中所有審核項目完整結構化成 JSON 格式，供 AI 系統逐條審查使用。
 
 ## 規則文件內容：
@@ -231,8 +231,6 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
     {{
       "criterion": "<審核項目名稱，與上方完全一致>",
       "status": "<符合 | 部分符合 | 不符合 | 無法判斷>",
-      "score": null,
-      "max_score": null,
       "summary": "<50~100字的審查總結，說明整體判斷依據，無論通過與否都必須填寫>",
       "evidence": [
         {{
@@ -305,10 +303,10 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
     _delete_gemini_file(file_uri, api_key)
 
     # 統計
-    total = len(all_items)
-    ok_count = sum(1 for it in all_items if it.get("status") == "符合")
-    partial_count = sum(1 for it in all_items if it.get("status") == "部分符合")
-    fail_count = sum(1 for it in all_items if it.get("status") == "不符合")
+    total        = len(all_items)
+    ok_count     = sum(1 for it in all_items if it.get("status") == "符合")
+    partial_count= sum(1 for it in all_items if it.get("status") == "部分符合")
+    fail_count   = sum(1 for it in all_items if it.get("status") == "不符合")
 
     if fail_count == 0 and partial_count == 0:
         verdict = "通過"
@@ -320,15 +318,9 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
     seen = set()
     unique_missing = [m for m in all_missing if not (m in seen or seen.add(m))]
 
-    scored_items = [it for it in all_items if it.get("score") is not None]
-    total_score = sum(it.get("score", 0) for it in scored_items)
-    max_score = sum(it.get("max_score", 0) for it in scored_items if it.get("max_score"))
-
     return {
         "verdict": verdict,
         "summary": f"共 {total} 項審核項目｜符合 {ok_count} 項・部分符合 {partial_count} 項・不符合 {fail_count} 項",
-        "total_score": total_score if scored_items else None,
-        "max_score": max_score if scored_items else None,
         "items": all_items,
         "missing_items": unique_missing,
     }
