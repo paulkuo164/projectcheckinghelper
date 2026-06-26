@@ -5,6 +5,26 @@ import datetime
 from utils.gemini_client import review_plan, generate_reply_letter
 from utils.standards_loader import load_standards
 
+
+# ── 輔助函式（需在呼叫前定義）────────────────────────────────────────────────
+def _save_record(filename, standard, score, max_score, result):
+    record_path = "standards/history.json"
+    records = []
+    if os.path.exists(record_path):
+        with open(record_path, "r", encoding="utf-8") as f:
+            records = json.load(f)
+    records.append({
+        "timestamp": datetime.datetime.now().isoformat(),
+        "filename": filename,
+        "standard": standard,
+        "score": score,
+        "max_score": max_score,
+        "verdict": result.get("verdict", ""),
+        "summary": result.get("summary", ""),
+    })
+    with open(record_path, "w", encoding="utf-8") as f:
+        json.dump(records, f, ensure_ascii=False, indent=2)
+
 st.set_page_config(page_title="審核計畫書", layout="wide")
 st.title("🔍 審核計畫書")
 
@@ -215,23 +235,3 @@ if result:
             edited = st.text_area("草稿內容（可直接編輯）", value=reply_letter, height=480, key="letter_editor")
             st.download_button("⬇️ 下載草稿 (.txt)", data=edited.encode("utf-8"),
                                file_name="公文回覆草稿.txt", mime="text/plain")
-
-
-# ── 輔助函式 ──────────────────────────────────────────────────────────────
-def _save_record(filename, standard, score, max_score, result):
-    record_path = "standards/history.json"
-    records = []
-    if os.path.exists(record_path):
-        with open(record_path, "r", encoding="utf-8") as f:
-            records = json.load(f)
-    records.append({
-        "timestamp": datetime.datetime.now().isoformat(),
-        "filename": filename,
-        "standard": standard,
-        "score": score,
-        "max_score": max_score,
-        "verdict": result.get("verdict", ""),
-        "summary": result.get("summary", ""),
-    })
-    with open(record_path, "w", encoding="utf-8") as f:
-        json.dump(records, f, ensure_ascii=False, indent=2)
