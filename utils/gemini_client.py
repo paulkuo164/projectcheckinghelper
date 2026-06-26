@@ -38,7 +38,7 @@ def parse_standard_from_text(rule_text: str, api_key: str) -> dict:
 
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        "gemini-2.0-flash:generateContent"
+        "gemini-2.0-flash-lite:generateContent"
         f"?key={api_key}"
     )
     payload = {
@@ -115,7 +115,7 @@ def generate_reply_letter(
 
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        "gemini-2.0-flash:generateContent"
+        "gemini-2.0-flash-lite:generateContent"
         f"?key={api_key}"
     )
     payload = {
@@ -198,7 +198,7 @@ def review_plan(doc_text: str, standard: dict, api_key: str) -> dict:
 
         url = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
-            "gemini-2.0-flash:generateContent"
+            "gemini-2.0-flash-lite:generateContent"
             f"?key={api_key}"
         )
         payload = {
