@@ -25,8 +25,8 @@ def _save_record(filename, standard, score, max_score, result):
     with open(record_path, "w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
 
-st.set_page_config(page_title="審核計畫書", layout="wide")
-st.title("🔍 審核計畫書")
+st.set_page_config(page_title="審核監造計畫書", layout="wide")
+st.title("🔍 審核監造計畫書")
 
 # ── Sidebar ───────────────────────────────────────────────────────────────
 with st.sidebar:
