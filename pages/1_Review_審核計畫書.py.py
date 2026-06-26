@@ -25,8 +25,8 @@ def _save_record(filename, standard, score, max_score, result):
     with open(record_path, "w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
 
-st.set_page_config(page_title="審核監造計畫書", layout="wide")
-st.title("🔍 審核監造計畫書")
+st.set_page_config(page_title="審核計畫書", layout="wide")
+st.title("🔍 審核計畫書")
 
 # ── Sidebar ───────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -119,7 +119,7 @@ with col_hint:
 if run and can_run:
     standard_obj = next(s for s in standards if s["name"] == selected_standard)
     n_criteria = len(standard_obj.get("criteria", []))
-    n_batches  = max(1, (n_criteria + 4) // 5)
+    n_batches  = max(1, (n_criteria + 2) // 3)
     hint = f"共 {n_criteria} 項，分 {n_batches} 批次送審" if n_batches > 1 else f"共 {n_criteria} 項"
 
     with st.spinner(f"AI 審核中（{hint}），請稍候…"):
