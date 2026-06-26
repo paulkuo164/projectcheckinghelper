@@ -42,7 +42,7 @@
   },
   {
     "name": "文件格式",
-    "description": "",
+    "description": "1. 確認圖表皆有名稱\n2. 若有圖表，則文章中必須描述該意義\n",
     "criteria": []
   }
 ]
