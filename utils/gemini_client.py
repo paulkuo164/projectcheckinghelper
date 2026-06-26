@@ -38,7 +38,7 @@ def parse_standard_from_text(rule_text: str, api_key: str) -> dict:
 
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        "gemini-2.0-flash-lite:generateContent"
+        "gemini-2.5-flash-lite:generateContent"
         f"?key={api_key}"
     )
     payload = {
@@ -115,7 +115,7 @@ def generate_reply_letter(
 
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        "gemini-2.0-flash-lite:generateContent"
+        "gemini-2.5-flash-lite:generateContent"
         f"?key={api_key}"
     )
     payload = {
@@ -134,12 +134,15 @@ def generate_reply_letter(
         return f"[公文產生失敗] {e}"
 
 
-def review_plan(doc_text: str, standard: dict, api_key: str) -> dict:
+def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str) -> dict:
     """
-    呼叫 Gemini API，依據審核標準對計畫書文字進行審核。
-    輸出：每個審核項目的問題條列（頁碼 + 問題描述），選填分數。
+    呼叫 Gemini API，直接傳入完整檔案（PDF/DOCX）進行審核。
+    不再做本地文字擷取，AI 可讀取完整文件內容與頁碼。
     支援大量審核項目：每批最多 15 項，分批送審後合併結果。
     """
+    import base64
+    file_b64 = base64.b64encode(file_bytes).decode("utf-8")
+
     criteria_all = standard.get("criteria", [])
     BATCH_SIZE = 15
 
@@ -153,7 +156,7 @@ def review_plan(doc_text: str, standard: dict, api_key: str) -> dict:
             for c in batch
         ])
 
-        prompt = f"""你是一位專業的計畫書審查委員。請依照以下審核項目，逐條審查計畫書內容。
+        prompt = f"""你是一位專業的計畫書審查委員。請依照以下審核項目，逐條審查附件計畫書的完整內容。
 
 ## 審核標準：{standard['name']}
 {standard.get('description', '')}
@@ -163,19 +166,14 @@ def review_plan(doc_text: str, standard: dict, api_key: str) -> dict:
 
 ---
 
-## 計畫書內容（含頁碼標記）：
-{doc_text[:20000]}
-
----
-
 ## 輸出格式（僅輸出合法 JSON，不要有其他文字）：
 {{
   "items": [
     {{
       "criterion": "<審核項目名稱，與上方完全一致>",
       "status": "<符合 | 部分符合 | 不符合 | 無法判斷>",
-      "score": <選填，整數，若不需評分請填 null>,
-      "max_score": <該項滿分，若不需評分請填 null>,
+      "score": null,
+      "max_score": null,
       "issues": [
         {{
           "page": "<第 N 頁，若無法對應頁碼則填「全文」>",
@@ -192,17 +190,27 @@ def review_plan(doc_text: str, standard: dict, api_key: str) -> dict:
 注意：
 1. items 數量必須與本批次審核項目數量完全一致（{len(batch)} 筆）
 2. 若該項目完全符合規定，issues 填空陣列 []，suggestion 填 null
-3. 頁碼請參考計畫書內容中的「=== 第 N 頁 ===」標記
+3. 頁碼請直接參考附件文件的實際頁碼
 4. 每個問題獨立列為一筆 issues，不要合併描述
 """
 
         url = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
-            "gemini-2.0-flash-lite:generateContent"
+            "gemini-2.5-flash-lite:generateContent"
             f"?key={api_key}"
         )
         payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
+            "contents": [{
+                "parts": [
+                    {
+                        "inline_data": {
+                            "mime_type": file_mime,
+                            "data": file_b64,
+                        }
+                    },
+                    {"text": prompt},
+                ]
+            }],
             "generationConfig": {
                 "temperature": 0.2,
                 "responseMimeType": "application/json",
@@ -210,7 +218,7 @@ def review_plan(doc_text: str, standard: dict, api_key: str) -> dict:
         }
 
         try:
-            resp = requests.post(url, json=payload, timeout=120)
+            resp = requests.post(url, json=payload, timeout=180)
             resp.raise_for_status()
             data = resp.json()
             raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
@@ -240,7 +248,6 @@ def review_plan(doc_text: str, standard: dict, api_key: str) -> dict:
     seen = set()
     unique_missing = [m for m in all_missing if not (m in seen or seen.add(m))]
 
-    # 分數（若有填）
     scored_items = [it for it in all_items if it.get("score") is not None]
     total_score = sum(it.get("score", 0) for it in scored_items)
     max_score = sum(it.get("max_score", 0) for it in scored_items if it.get("max_score"))
