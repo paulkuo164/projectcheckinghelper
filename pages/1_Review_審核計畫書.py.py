@@ -119,7 +119,7 @@ with col_hint:
 if run and can_run:
     standard_obj = next(s for s in standards if s["name"] == selected_standard)
     n_criteria = len(standard_obj.get("criteria", []))
-    n_batches  = max(1, (n_criteria + 2) // 3)
+    n_batches  = max(1, (n_criteria + 4) // 5)
     hint = f"共 {n_criteria} 項，分 {n_batches} 批次送審" if n_batches > 1 else f"共 {n_criteria} 項"
 
     with st.spinner(f"AI 審核中（{hint}），請稍候…"):
