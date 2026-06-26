@@ -38,7 +38,7 @@ def parse_standard_from_text(rule_text: str, api_key: str) -> dict:
 
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        "gemini-2.5-flash-lite:generateContent"
+        "gemini-2.5-flash:generateContent"
         f"?key={api_key}"
     )
     payload = {
@@ -115,7 +115,7 @@ def generate_reply_letter(
 
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        "gemini-2.5-flash-lite:generateContent"
+        "gemini-2.5-flash:generateContent"
         f"?key={api_key}"
     )
     payload = {
@@ -203,7 +203,7 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
         return {"error": f"檔案上傳失敗：{e}"}
 
     criteria_all = standard.get("criteria", [])
-    BATCH_SIZE = 3
+    BATCH_SIZE = 5
 
     all_items = []
     all_missing = []
@@ -258,7 +258,7 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
 
         url = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
-            "gemini-2.5-flash-lite:generateContent"
+            "gemini-2.5-flash:generateContent"
             f"?key={api_key}"
         )
         payload = {
@@ -271,7 +271,7 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
             "generationConfig": {
                 "temperature": 0.2,
                 "responseMimeType": "application/json",
-                "maxOutputTokens": 16384,
+                "maxOutputTokens": 65536,
             },
         }
 
