@@ -117,16 +117,19 @@ with col_hint:
 if run and can_run:
     standard_obj = next(s for s in standards if s["name"] == selected_standard)
     n_criteria = len(standard_obj.get("criteria", []))
-    n_batches  = max(1, (n_criteria + 4) // 5)
-    hint = f"共 {n_criteria} 項，分 {n_batches} 批次送審" if n_batches > 1 else f"共 {n_criteria} 項"
+    hint = f"共 {n_criteria} 項，逐項精細審查"
 
-    with st.spinner(f"AI 審核中（{hint}），請稍候…"):
+    with st.spinner(f"Step 1：解析目錄章節中…"):
         result = review_plan(
             file_bytes=st.session_state["plan_bytes"],
             file_mime=st.session_state["plan_mime"],
             standard=standard_obj,
             api_key=api_key,
         )
+
+    toc_count = result.get("toc_chapters", 0)
+    if not result.get("error") and toc_count:
+        st.toast(f"✅ 目錄解析完成，共 {toc_count} 個章節，開始逐項審查…")
 
     if result.get("error"):
         st.error(f"審核失敗：{result['error']}")
@@ -164,6 +167,8 @@ if result:
 
     st.markdown(f"### {verdict_icon} 審核結論：{verdict}")
     st.info(summary)
+    if result.get("toc_chapters"):
+        st.caption(f"📑 已解析目錄 {result['toc_chapters']} 個章節，各項目依對應章節精細審查")
     st.markdown("---")
 
     tab_review, tab_letter = st.tabs(["📋 審核細節", "📨 公文回覆草稿"])
@@ -204,6 +209,8 @@ if result:
                     st.markdown("**🔴 問題項目**")
                     for j, ev in enumerate(issues, 1):
                         page = ev.get("page", "—")
+                        if str(page).strip().lstrip('-').isdigit():
+                            page = f"第 {page} 頁"
                         loc  = ev.get("location", "")
                         desc = ev.get("description", "—")
                         loc_str = f"｜{loc}" if loc else ""
@@ -215,6 +222,8 @@ if result:
                     st.markdown("**🟢 符合依據**")
                     for j, ev in enumerate(conform, 1):
                         page = ev.get("page", "—")
+                        if str(page).strip().lstrip('-').isdigit():
+                            page = f"第 {page} 頁"
                         loc  = ev.get("location", "")
                         desc = ev.get("description", "—")
                         loc_str = f"｜{loc}" if loc else ""
