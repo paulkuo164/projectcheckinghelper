@@ -7,7 +7,7 @@ def parse_standard_from_text(rule_text: str, api_key: str) -> dict:
     將條文式規則文字（Word/PDF 擷取）解析成結構化審核標準 JSON。
     回傳格式與 standards.json 的單筆標準相同。
     """
-    prompt = f"""你是一位熟悉台灣政府採購與工程審查的專業顧問。工程經驗90年
+    prompt = f"""你是一位熟悉台灣政府採購與工程審查的專業顧問。
 請閱讀以下審核規則文件，將其中所有審核項目完整結構化成 JSON 格式，供 AI 系統逐條審查使用。
 
 ## 規則文件內容：
@@ -190,130 +190,221 @@ def _delete_gemini_file(file_uri: str, api_key: str):
         pass  # 刪除失敗不影響主流程
 
 
-def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str) -> dict:
+def _extract_toc(file_uri: str, file_mime: str, api_key: str) -> dict:
     """
-    呼叫 Gemini API，透過 File API 上傳完整檔案後進行審核。
-    支援 100+ 頁的大型文件，不受 inline_data 大小限制。
-    支援大量審核項目：每批最多 15 項，分批送審後合併結果。
+    Step 1：讓 AI 讀取目錄頁，回傳章節名稱與頁碼範圍的對應表。
     """
-    # 先上傳檔案取得 URI
-    try:
-        file_uri = _upload_file_to_gemini(file_bytes, file_mime, api_key)
-    except Exception as e:
-        return {"error": f"檔案上傳失敗：{e}"}
+    prompt = """請讀取這份文件的目錄頁，將所有章節名稱與對應頁碼範圍整理成 JSON。
 
-    criteria_all = standard.get("criteria", [])
-    BATCH_SIZE = 5
+輸出格式（僅輸出合法 JSON，不要有其他文字）：
+{
+  "chapters": [
+    {
+      "title": "<章節名稱，完整保留原文>",
+      "page_start": <起始頁碼，整數>,
+      "page_end": <結束頁碼，整數，若無法判斷則填 null>
+    }
+  ]
+}
 
-    all_items = []
-    all_missing = []
+注意：
+1. 只讀目錄頁，不要審查內文
+2. 章節名稱完整保留原文，包含編號
+3. 每個一級章節和二級章節都要列出
+4. page_end 可由下一章節的 page_start - 1 推算
+"""
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        "gemini-2.5-flash:generateContent"
+        f"?key={api_key}"
+    )
+    payload = {
+        "contents": [{
+            "parts": [
+                {"file_data": {"mime_type": file_mime, "file_uri": file_uri}},
+                {"text": prompt},
+            ]
+        }],
+        "generationConfig": {
+            "temperature": 0.0,
+            "responseMimeType": "application/json",
+            "maxOutputTokens": 4096,
+        },
+    }
+    resp = requests.post(url, json=payload, timeout=60)
+    resp.raise_for_status()
+    data = resp.json()
+    raw = data["candidates"][0]["content"]["parts"][0]["text"]
+    return json.loads(raw)
 
-    for batch_start in range(0, len(criteria_all), BATCH_SIZE):
-        batch = criteria_all[batch_start: batch_start + BATCH_SIZE]
-        criteria_text = "\n".join([
-            f"- 【{c['name']}】：{c.get('description', '')}"
-            for c in batch
-        ])
 
-        prompt = f"""你是一位專業的計畫書審查委員。請依照以下審核項目，逐條審查附件計畫書的完整內容（包含所有頁面），並針對每個項目撰寫具體的審查意見。
+def _match_chapter(criterion_name: str, chapters: list) -> dict | None:
+    """
+    將審核項目名稱對應到最相關的章節。
+    用關鍵字比對，找不到則回傳 None（代表送全文審查）。
+    """
+    name = criterion_name.lower()
+    # 移除編號前綴（如「1. 」「10. 」）
+    import re
+    name_clean = re.sub(r'^\d+[\.\s]+', '', name).strip()
 
-## 審核標準：{standard['name']}
-{standard.get('description', '')}
+    best = None
+    best_score = 0
+    for ch in chapters:
+        title = ch.get("title", "").lower()
+        title_clean = re.sub(r'^\d+[\.\s]+', '', title).strip()
+        # 計算相似度：共同字元數
+        common = sum(1 for c in name_clean if c in title_clean)
+        if common > best_score:
+            best_score = common
+            best = ch
 
-### 本批次審核項目（共 {len(batch)} 項）：
-{criteria_text}
+    # 相似度太低就不對應（送全文）
+    if best_score < 2:
+        return None
+    return best
+
+
+def _review_single_item(
+    criterion: dict,
+    chapter: dict | None,
+    file_uri: str,
+    file_mime: str,
+    standard_name: str,
+    api_key: str,
+) -> dict:
+    """
+    Step 2：針對單一審核項目，送對應章節內容進行精細審查。
+    """
+    if chapter and chapter.get("page_start"):
+        page_info = f"請重點審查第 {chapter['page_start']} 頁"
+        if chapter.get("page_end"):
+            page_info += f" 至第 {chapter['page_end']} 頁"
+        page_info += f"（對應章節：{chapter['title']}），若該範圍內找不到相關內容再擴大至全文。"
+    else:
+        page_info = "請審查全文中與此項目相關的所有內容。"
+
+    prompt = f"""你是一位專業的計畫書審查委員，請針對以下單一審核項目進行精細審查。
+
+## 審核標準：{standard_name}
+
+## 審核項目：
+【{criterion['name']}】
+{criterion.get('description', '')}
+
+## 審查範圍：
+{page_info}
 
 ---
 
 ## 輸出格式（僅輸出合法 JSON，不要有其他文字）：
 {{
-  "items": [
+  "criterion": "{criterion['name']}",
+  "status": "<符合 | 部分符合 | 不符合 | 無法判斷>",
+  "summary": "<80~150字的詳細審查總結，具體說明判斷依據>",
+  "evidence": [
     {{
-      "criterion": "<審核項目名稱，與上方完全一致>",
-      "status": "<符合 | 部分符合 | 不符合 | 無法判斷>",
-      "summary": "<50~100字的審查總結，說明整體判斷依據，無論通過與否都必須填寫>",
-      "evidence": [
-        {{
-          "page": "<第 N 頁，若無法對應頁碼則填「全文」>",
-          "location": "<段落標題或關鍵字>",
-          "description": "<具體說明此處的內容如何符合或不符合該審核項目，引用文件中的實際內容>",
-          "type": "<符合 | 問題>"
-        }}
-      ],
-      "suggestion": "<具體改善建議，若完全符合則填 null>"
+      "page": "<第 N 頁>",
+      "location": "<段落標題或關鍵字>",
+      "description": "<具體說明此處內容如何符合或不符合，引用文件實際文字>",
+      "type": "<符合 | 問題>"
     }}
   ],
-  "missing_items": ["<整體缺漏或需補件事項，如無則空陣列>"]
+  "suggestion": "<具體改善建議，若完全符合則填 null>",
+  "missing_items": ["<此項目的缺漏事項，如無則空陣列>"]
 }}
 
 注意：
-1. items 數量必須與本批次審核項目數量完全一致（{len(batch)} 筆）
-2. 每個項目的 summary 必須填寫，100字以內
-3. evidence 每項最多 3 筆，通過時 type 填「符合」，有問題時 type 填「問題」
-4. 頁碼請直接參考附件文件的實際頁碼
-5. description 每筆 50 字以內，精簡有力
+1. evidence 至少填 1 筆，最多 5 筆，無論通過或不通過都要有具體佐證
+2. 通過時 type 填「符合」，引用文件中符合的實際內容與頁碼
+3. 有問題時 type 填「問題」，具體說明缺漏或不符合之處
+4. summary 要比過去更詳細，說清楚審查過程與判斷理由
 """
 
-        url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            "gemini-2.5-flash:generateContent"
-            f"?key={api_key}"
-        )
-        payload = {
-            "contents": [{
-                "parts": [
-                    {"file_data": {"mime_type": file_mime, "file_uri": file_uri}},
-                    {"text": prompt},
-                ]
-            }],
-            "generationConfig": {
-                "temperature": 0.2,
-                "responseMimeType": "application/json",
-                "maxOutputTokens": 65536,
-            },
-        }
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        "gemini-2.5-flash:generateContent"
+        f"?key={api_key}"
+    )
+    payload = {
+        "contents": [{
+            "parts": [
+                {"file_data": {"mime_type": file_mime, "file_uri": file_uri}},
+                {"text": prompt},
+            ]
+        }],
+        "generationConfig": {
+            "temperature": 0.2,
+            "responseMimeType": "application/json",
+            "maxOutputTokens": 4096,
+        },
+    }
 
+    resp = requests.post(url, json=payload, timeout=120)
+    resp.raise_for_status()
+    data = resp.json()
+    candidate = data["candidates"][0]
+    if candidate.get("finishReason") == "MAX_TOKENS":
+        raise ValueError(f"項目「{criterion['name']}」回傳被截斷")
+    raw = candidate["content"]["parts"][0]["text"]
+    return json.loads(raw)
+
+
+def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str) -> dict:
+    """
+    Chunk 審核流程：
+    Step 1：AI 解析目錄，建立章節與頁碼對應表
+    Step 2：每個審核項目各自對應章節，單獨精細審查
+    """
+    # 上傳檔案
+    try:
+        file_uri = _upload_file_to_gemini(file_bytes, file_mime, api_key)
+    except Exception as e:
+        return {"error": f"檔案上傳失敗：{e}"}
+
+    # Step 1：解析目錄
+    try:
+        toc = _extract_toc(file_uri, file_mime, api_key)
+        chapters = toc.get("chapters", [])
+    except Exception:
+        chapters = []  # 解析失敗就全部送全文審查
+
+    criteria_all = standard.get("criteria", [])
+    all_items = []
+    all_missing = []
+
+    # Step 2：逐項審查
+    for criterion in criteria_all:
+        chapter = _match_chapter(criterion["name"], chapters)
         try:
-            resp = requests.post(url, json=payload, timeout=180)
-            resp.raise_for_status()
-            data = resp.json()
-
-            # 檢查是否因 token 超限被截斷
-            candidate = data["candidates"][0]
-            finish_reason = candidate.get("finishReason", "")
-            if finish_reason == "MAX_TOKENS":
-                _delete_gemini_file(file_uri, api_key)
-                return {"error": f"AI 回傳被截斷（批次 {batch_start//BATCH_SIZE+1}），請減少每批審核項目數量或縮短審核說明。"}
-
-            raw_text = candidate["content"]["parts"][0]["text"]
-            batch_result = json.loads(raw_text)
-            all_items.extend(batch_result.get("items", []))
-            all_missing.extend(batch_result.get("missing_items", []))
+            item = _review_single_item(
+                criterion=criterion,
+                chapter=chapter,
+                file_uri=file_uri,
+                file_mime=file_mime,
+                standard_name=standard["name"],
+                api_key=api_key,
+            )
+            missing = item.pop("missing_items", [])
+            all_items.append(item)
+            all_missing.extend(missing)
         except requests.exceptions.HTTPError as e:
             _delete_gemini_file(file_uri, api_key)
-            return {"error": f"API 錯誤（批次 {batch_start//BATCH_SIZE+1}）：{e.response.status_code} {e.response.text[:200]}"}
-        except json.JSONDecodeError:
-            _delete_gemini_file(file_uri, api_key)
-            return {"error": f"AI 回傳格式錯誤（批次 {batch_start//BATCH_SIZE+1}）。原始內容：{raw_text[:300]}"}
+            return {"error": f"API 錯誤（項目：{criterion['name']}）：{e.response.status_code} {e.response.text[:200]}"}
         except Exception as e:
             _delete_gemini_file(file_uri, api_key)
-            return {"error": str(e)}
+            return {"error": f"審查失敗（項目：{criterion['name']}）：{e}"}
 
-    # 審核完成，刪除已上傳的檔案
     _delete_gemini_file(file_uri, api_key)
 
     # 統計
-    total        = len(all_items)
-    ok_count     = sum(1 for it in all_items if it.get("status") == "符合")
-    partial_count= sum(1 for it in all_items if it.get("status") == "部分符合")
-    fail_count   = sum(1 for it in all_items if it.get("status") == "不符合")
+    total         = len(all_items)
+    ok_count      = sum(1 for it in all_items if it.get("status") == "符合")
+    partial_count = sum(1 for it in all_items if it.get("status") == "部分符合")
+    fail_count    = sum(1 for it in all_items if it.get("status") == "不符合")
 
-    if fail_count == 0 and partial_count == 0:
-        verdict = "通過"
-    elif fail_count == 0:
-        verdict = "待補件"
-    else:
-        verdict = "不通過"
+    verdict = "通過" if (fail_count == 0 and partial_count == 0) else (
+              "待補件" if fail_count == 0 else "不通過")
 
     seen = set()
     unique_missing = [m for m in all_missing if not (m in seen or seen.add(m))]
@@ -321,6 +412,7 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
     return {
         "verdict": verdict,
         "summary": f"共 {total} 項審核項目｜符合 {ok_count} 項・部分符合 {partial_count} 項・不符合 {fail_count} 項",
+        "toc_chapters": len(chapters),
         "items": all_items,
         "missing_items": unique_missing,
     }
