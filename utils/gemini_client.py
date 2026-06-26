@@ -7,7 +7,7 @@ def parse_standard_from_text(rule_text: str, api_key: str) -> dict:
     將條文式規則文字（Word/PDF 擷取）解析成結構化審核標準 JSON。
     回傳格式與 standards.json 的單筆標準相同。
     """
-    prompt = f"""你是一位熟悉台灣政府採購與工程審查的專業顧問。
+    prompt = f"""你是一位熟悉台灣政府採購與工程審查的專業顧問。有20年的工程經驗。
 請閱讀以下審核規則文件，將其中所有審核項目完整結構化成 JSON 格式，供 AI 系統逐條審查使用。
 
 ## 規則文件內容：
