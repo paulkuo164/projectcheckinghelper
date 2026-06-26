@@ -203,7 +203,7 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
         return {"error": f"檔案上傳失敗：{e}"}
 
     criteria_all = standard.get("criteria", [])
-    BATCH_SIZE = 15
+    BATCH_SIZE = 5
 
     all_items = []
     all_missing = []
@@ -271,6 +271,7 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
             "generationConfig": {
                 "temperature": 0.2,
                 "responseMimeType": "application/json",
+                "maxOutputTokens": 8192,
             },
         }
 
@@ -278,7 +279,15 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
             resp = requests.post(url, json=payload, timeout=180)
             resp.raise_for_status()
             data = resp.json()
-            raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+
+            # 檢查是否因 token 超限被截斷
+            candidate = data["candidates"][0]
+            finish_reason = candidate.get("finishReason", "")
+            if finish_reason == "MAX_TOKENS":
+                _delete_gemini_file(file_uri, api_key)
+                return {"error": f"AI 回傳被截斷（批次 {batch_start//BATCH_SIZE+1}），請減少每批審核項目數量或縮短審核說明。"}
+
+            raw_text = candidate["content"]["parts"][0]["text"]
             batch_result = json.loads(raw_text)
             all_items.extend(batch_result.get("items", []))
             all_missing.extend(batch_result.get("missing_items", []))
