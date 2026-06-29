@@ -52,16 +52,17 @@ def _supabase_rpc(func_name: str, params: dict) -> list:
 
 def get_embedding(text: str, api_key: str) -> list[float]:
     """
-    用 Gemini text-embedding-004 將文字轉成 768 維向量。
+    用 gemini-embedding-001 將文字轉成 768 維向量（指定 outputDimensionality）。
     """
     url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"text-embedding-004:embedContent?key={api_key}"
+        "https://generativelanguage.googleapis.com/v1/models/"
+        f"gemini-embedding-001:embedContent?key={api_key}"
     )
     payload = {
-        "model": "models/text-embedding-004",
+        "model": "models/gemini-embedding-001",
         "content": {"parts": [{"text": text[:8000]}]},
         "taskType": "RETRIEVAL_DOCUMENT",
+        "outputDimensionality": 768,
     }
     resp = requests.post(url, json=payload, timeout=30)
     resp.raise_for_status()
