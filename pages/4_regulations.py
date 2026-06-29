@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 from utils.file_parser import extract_text
 from utils.embeddings import upload_regulation, list_regulations, delete_regulation
@@ -42,47 +43,50 @@ with col_left:
 with col_right:
     st.subheader("上傳規範文件")
 
-    doc_name = st.text_input(
-        "文件名稱",
-        placeholder="例：EM-1020、CNS 3090、職業安全衛生法",
-        help="這個名稱會顯示在審核結果的引用來源中"
-    )
-
-    uploaded = st.file_uploader(
-        "選擇規範文件（PDF / Word）",
+    uploaded_files = st.file_uploader(
+        "選擇規範文件（PDF / Word，可一次選多個）",
         type=["pdf", "docx"],
         key="reg_uploader",
+        accept_multiple_files=True,
     )
 
-    if uploaded:
-        st.caption(f"📄 {uploaded.name}　（{round(uploaded.size/1024)}KB）")
+    if uploaded_files:
+        st.caption(f"已選 {len(uploaded_files)} 個檔案：")
+        for f in uploaded_files:
+            st.caption(f"　📄 {f.name}　（{round(f.size/1024)}KB）")
 
     chunk_size = st.slider(
         "切割大小（字元數）",
-        min_value=200, max_value=1000, value=500, step=100,
+        min_value=200, max_value=1000, value=400, step=100,
         help="較小的 chunk 定位精確但條文可能被截斷；較大的 chunk 保留完整性但搜尋較模糊"
     )
 
-    can_upload = bool(api_key and doc_name and uploaded)
+    st.caption("💡 自動使用檔名（去除副檔名）作為規範名稱。")
+
+    can_upload = bool(api_key and uploaded_files)
 
     if st.button("🚀 開始建庫", type="primary", disabled=not can_upload):
-        with st.spinner("擷取文字中…"):
-            text = extract_text(uploaded)
+        for uploaded in uploaded_files:
+            auto_name = os.path.splitext(uploaded.name)[0]
+            st.markdown(f"**📄 處理：{auto_name}**")
 
-        if not text or len(text) < 50:
-            st.error("文件內容擷取失敗或內容過短，請確認檔案是否有文字內容。")
-        else:
-            st.info(f"擷取到 {len(text):,} 字元，開始切割並建立向量索引…")
+            with st.spinner(f"擷取 {uploaded.name} 文字中…"):
+                text = extract_text(uploaded)
+
+            if not text or len(text) < 50:
+                st.error(f"「{uploaded.name}」內容擷取失敗或過短，已跳過。")
+                continue
+
+            st.info(f"擷取到 {len(text):,} 字元，開始建立向量索引…")
             progress_bar = st.progress(0)
-            status_text = st.empty()
+            status_text  = st.empty()
 
-            def on_progress(current, total):
-                pct = current / total
-                progress_bar.progress(pct)
-                status_text.caption(f"處理中 {current}/{total} chunks…")
+            def on_progress(current, total, bar=progress_bar, txt=status_text):
+                bar.progress(current / total)
+                txt.caption(f"處理中 {current}/{total} chunks…")
 
             result = upload_regulation(
-                doc_name=doc_name,
+                doc_name=auto_name,
                 text=text,
                 api_key=api_key,
                 progress_callback=on_progress,
@@ -90,14 +94,13 @@ with col_right:
 
             if result["ok"]:
                 progress_bar.progress(1.0)
-                st.success(f"✅「{doc_name}」建庫完成，共 {result['chunks']} 個條文 chunks！")
-                st.rerun()
+                st.success(f"✅「{auto_name}」建庫完成，共 {result['chunks']} 個條文 chunks！")
             else:
-                st.error(f"建庫失敗：{result['error']}")
+                st.error(f"「{auto_name}」建庫失敗：{result['error']}")
+
+        st.rerun()
 
     if not api_key:
         st.warning("請輸入 Gemini API Key")
-    elif not doc_name:
-        st.warning("請填入文件名稱")
-    elif not uploaded:
-        st.warning("請上傳規範文件")
+    elif not uploaded_files:
+        st.warning("請選擇規範文件")
