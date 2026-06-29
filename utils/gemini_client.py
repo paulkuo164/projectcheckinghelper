@@ -136,10 +136,9 @@ def generate_reply_letter(
 
 def _upload_file_to_gemini(file_bytes: bytes, file_mime: str, api_key: str) -> str:
     """
-    透過 Gemini File API 上傳檔案，回傳 file_uri。
-    支援大型 PDF，不受 inline_data 大小限制。
+    透過 Gemini File API 上傳檔案，等待狀態變成 ACTIVE 後回傳 file_uri。
     """
-    import io
+    import time
 
     # Step 1：取得上傳 URL
     start_url = (
@@ -176,7 +175,26 @@ def _upload_file_to_gemini(file_bytes: bytes, file_mime: str, api_key: str) -> s
     )
     resp2.raise_for_status()
     file_info = resp2.json()
-    return file_info["file"]["uri"]
+    file_uri  = file_info["file"]["uri"]
+    file_name = file_info["file"]["name"]  # files/xxx
+
+    # Step 3：等待檔案狀態變成 ACTIVE
+    status_url = (
+        f"https://generativelanguage.googleapis.com/v1beta/{file_name}"
+        f"?key={api_key}"
+    )
+    for _ in range(20):  # 最多等 40 秒
+        time.sleep(2)
+        r = requests.get(status_url, timeout=15)
+        if r.status_code == 200:
+            state = r.json().get("state", "")
+            if state == "ACTIVE":
+                return file_uri
+            elif state == "FAILED":
+                raise ValueError("檔案處理失敗（File API state: FAILED）")
+        # PROCESSING 狀態繼續等待
+
+    return file_uri  # 等待超時仍回傳，讓後續嘗試
 
 
 def _delete_gemini_file(file_uri: str, api_key: str):
@@ -360,14 +378,22 @@ def _review_single_item(
         },
     }
 
-    resp = requests.post(url, json=payload, timeout=120)
-    resp.raise_for_status()
-    data = resp.json()
-    candidate = data["candidates"][0]
-    if candidate.get("finishReason") == "MAX_TOKENS":
-        raise ValueError(f"項目「{criterion['name']}」回傳被截斷")
-    raw = candidate["content"]["parts"][0]["text"]
-    return json.loads(raw)
+    for attempt in range(2):  # 最多重試一次
+        try:
+            resp = requests.post(url, json=payload, timeout=300)
+            resp.raise_for_status()
+            data = resp.json()
+            candidate = data["candidates"][0]
+            if candidate.get("finishReason") == "MAX_TOKENS":
+                raise ValueError(f"項目「{criterion['name']}」回傳被截斷")
+            raw = candidate["content"]["parts"][0]["text"]
+            return json.loads(raw)
+        except requests.exceptions.Timeout:
+            if attempt == 0:
+                continue  # 重試一次
+            raise Exception("請求逾時（已重試），請稍後再試或縮小審核範圍")
+        except Exception:
+            raise
 
 
 def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str) -> dict:
