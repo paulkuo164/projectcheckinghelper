@@ -52,5 +52,14 @@ st.dataframe(
     hide_index=True,
 )
 
-csv = filtered.to_csv(index=False, encoding="utf-8-sig")
-st.download_button("⬇️ 匯出 CSV", data=csv, file_name="審核紀錄.csv", mime="text/csv")
+from io import BytesIO
+
+buf = BytesIO()
+filtered[display_cols].to_excel(buf, index=False, engine="openpyxl")
+buf.seek(0)
+st.download_button(
+    "⬇️ 匯出 Excel",
+    data=buf,
+    file_name="審核紀錄.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
