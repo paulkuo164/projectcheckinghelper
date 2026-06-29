@@ -272,10 +272,26 @@ def _review_single_item(
     file_mime: str,
     standard_name: str,
     api_key: str,
+    extra_note: str = "",
 ) -> dict:
     """
     Step 2：針對單一審核項目，送對應章節內容進行精細審查。
+    自動從向量資料庫查詢相關規範條文作為審查依據。
     """
+    # RAG：查詢相關規範條文
+    try:
+        from utils.embeddings import search_regulations
+        query = f"{criterion['name']} {criterion.get('description', '')}"
+        reg_results = search_regulations(query, api_key, top_k=5)
+        reg_context = ""
+        if reg_results:
+            reg_context = "\n\n## 相關規範條文（自動檢索）：\n"
+            for r in reg_results:
+                sim = round(r.get("similarity", 0) * 100, 1)
+                reg_context += f"\n【{r['doc_name']}｜相關度 {sim}%】\n{r['content']}\n"
+    except Exception:
+        reg_context = ""
+
     if chapter and chapter.get("page_start"):
         page_info = f"請重點審查第 {chapter['page_start']} 頁"
         if chapter.get("page_end"):
@@ -283,6 +299,8 @@ def _review_single_item(
         page_info += f"（對應章節：{chapter['title']}），若該範圍內找不到相關內容再擴大至全文。"
     else:
         page_info = "請審查全文中與此項目相關的所有內容。"
+
+    extra_note_section = f"\n\n## 審查人員補充說明（請特別注意）：\n{extra_note}" if extra_note else ""
 
     prompt = f"""你是一位專業的計畫書審查委員，請針對以下單一審核項目進行精細審查。
 
@@ -294,6 +312,7 @@ def _review_single_item(
 
 ## 審查範圍：
 {page_info}
+{reg_context}{extra_note_section}
 
 ---
 
@@ -301,24 +320,25 @@ def _review_single_item(
 {{
   "criterion": "{criterion['name']}",
   "status": "<符合 | 部分符合 | 不符合 | 無法判斷>",
-  "summary": "<80~150字的詳細審查總結，具體說明判斷依據>",
+  "summary": "<80~150字的詳細審查總結，具體說明判斷依據，如有引用規範請標注條號>",
   "evidence": [
     {{
       "page": "<第 N 頁>",
       "location": "<段落標題或關鍵字>",
-      "description": "<具體說明此處內容如何符合或不符合，引用文件實際文字>",
+      "description": "<具體說明此處內容如何符合或不符合，可引用上方規範條文對照>",
       "type": "<符合 | 問題>"
     }}
   ],
   "suggestion": "<具體改善建議，若完全符合則填 null>",
-  "missing_items": ["<此項目的缺漏事項，如無則空陣列>"]
+  "missing_items": ["<此項目的缺漏事項，如無則空陣列>"],
+  "regulations_cited": ["<引用到的規範名稱，如 EM-1020、CNS 3090，如無則空陣列>"]
 }}
 
 注意：
-1. evidence 至少填 1 筆，最多 5 筆，無論通過或不通過都要有具體佐證
-2. 通過時 type 填「符合」，引用文件中符合的實際內容與頁碼
-3. 有問題時 type 填「問題」，具體說明缺漏或不符合之處
-4. summary 要比過去更詳細，說清楚審查過程與判斷理由
+1. evidence 至少填 1 筆，最多 5 筆
+2. 若有提供相關規範條文，請在 summary 和 evidence 中具體對照引用
+3. regulations_cited 填入實際有引用到的規範名稱
+4. 頁碼請直接參考附件文件的實際頁碼
 """
 
     url = (
@@ -374,6 +394,8 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
     all_missing = []
 
     # Step 2：逐項審查
+    extra_note = standard.get("extra_note", "")
+
     for criterion in criteria_all:
         chapter = _match_chapter(criterion["name"], chapters)
         try:
@@ -384,6 +406,7 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
                 file_mime=file_mime,
                 standard_name=standard["name"],
                 api_key=api_key,
+                extra_note=extra_note,
             )
             missing = item.pop("missing_items", [])
             all_items.append(item)
