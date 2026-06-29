@@ -83,22 +83,30 @@ with col_right:
 
             criteria = preview.get("criteria", [])
             total = sum(c.get("max_score", 0) for c in criteria)
-            st.markdown(f"**審核項目**（共 {len(criteria)} 項，每項滿分 10 分）")
+            st.markdown(f"**審核項目**（共 {len(criteria)} 項）")
 
             edited_criteria = []
             for j, c in enumerate(criteria):
+                is_required = c.get("required", j == 0)
+                lock_icon = "🔒" if is_required else "📄"
                 with st.expander(
-                    f"項目 {j+1}：{c.get('name','未命名')}（{c.get('max_score',0)} 分）",
+                    f"{lock_icon} 項目 {j+1}：{c.get('name','未命名')}",
                     expanded=False
                 ):
-                    c_name = st.text_input("項目名稱", value=c.get("name",""), key=f"pn_{j}")
-                    c_max  = st.number_input("配分", min_value=1, max_value=100,
-                                             value=int(c.get("max_score", 10)), key=f"pm_{j}")
-                    c_desc = st.text_area("審核重點說明", value=c.get("description",""),
-                                          key=f"pd_{j}", height=100)
-                    keep = not st.checkbox("刪除此項目", key=f"pdel_{j}")
+                    c_name     = st.text_input("項目名稱", value=c.get("name",""), key=f"pn_{j}")
+                    c_desc     = st.text_area("審核重點說明", value=c.get("description",""),
+                                              key=f"pd_{j}", height=100)
+                    c_required = st.checkbox(
+                        "🔒 設為必選", value=is_required, key=f"pr_{j}",
+                        disabled=(j == 0)
+                    )
+                    keep = not st.checkbox("刪除此項目", key=f"pdel_{j}", disabled=(j == 0))
                     if keep:
-                        edited_criteria.append({"name": c_name, "max_score": c_max, "description": c_desc})
+                        edited_criteria.append({
+                            "name": c_name,
+                            "description": c_desc,
+                            "required": True if j == 0 else c_required,
+                        })
 
             new_total = sum(c["max_score"] for c in edited_criteria)
             st.caption(f"目前總分：**{new_total}** 分")
@@ -128,30 +136,45 @@ with col_right:
         name        = st.text_input("標準名稱", value=default["name"])
         description = st.text_area("說明", value=default.get("description", ""), height=80)
 
-        st.markdown("**審核項目與配分**")
+        st.markdown("**審核項目**")
         criteria = list(default.get("criteria", []))
         updated_criteria = []
 
         for j, c in enumerate(criteria):
-            with st.expander(f"項目 {j+1}：{c.get('name','未命名')}", expanded=False):
+            is_required = c.get("required", j == 0)  # 第一項預設必選
+            lock_icon = "🔒" if is_required else "📄"
+            with st.expander(f"{lock_icon} 項目 {j+1}：{c.get('name','未命名')}", expanded=False):
                 c_name = st.text_input("項目名稱", value=c.get("name",""), key=f"cn_{j}")
-                c_max  = st.number_input("滿分", min_value=1, max_value=100,
-                                         value=int(c.get("max_score", 10)), key=f"cm_{j}")
                 c_desc = st.text_area("審核重點（AI 判斷依據）",
-                                      value=c.get("description",""), key=f"cd_{j}", height=80)
-                if not st.checkbox("刪除此項目", key=f"del_{j}"):
-                    updated_criteria.append({"name": c_name, "max_score": c_max, "description": c_desc})
+                                      value=c.get("description",""), key=f"cd_{j}", height=100)
+                c_required = st.checkbox(
+                    "🔒 設為必選（每次審核強制納入）",
+                    value=is_required,
+                    key=f"cr_{j}",
+                    disabled=(j == 0),  # 第一項永遠鎖定
+                    help="必選項目在審核頁面會以灰色鎖定，無法取消勾選"
+                )
+                remove = st.checkbox("🗑️ 刪除此項目", key=f"del_{j}", disabled=(j == 0))
+                if not remove:
+                    updated_criteria.append({
+                        "name": c_name,
+                        "description": c_desc,
+                        "required": True if j == 0 else c_required,
+                    })
 
         with st.expander("➕ 新增審核項目"):
-            new_c_name = st.text_input("項目名稱", key="new_crit_name")
-            new_c_max  = st.number_input("滿分", min_value=1, max_value=100, value=10, key="new_crit_max")
-            new_c_desc = st.text_area("審核重點", key="new_crit_desc", height=80)
+            new_c_name     = st.text_input("項目名稱", key="new_crit_name")
+            new_c_desc     = st.text_area("審核重點", key="new_crit_desc", height=80)
+            new_c_required = st.checkbox("🔒 設為必選", key="new_crit_required", value=False)
             if st.button("加入項目") and new_c_name:
-                updated_criteria.append({"name": new_c_name, "max_score": new_c_max, "description": new_c_desc})
+                updated_criteria.append({
+                    "name": new_c_name,
+                    "description": new_c_desc,
+                    "required": new_c_required,
+                })
                 st.rerun()
 
-        total = sum(c.get("max_score", 0) for c in updated_criteria)
-        st.caption(f"目前總分：**{total}** 分")
+        st.caption(f"共 {len(updated_criteria)} 個審核項目，其中 {sum(1 for c in updated_criteria if c.get('required'))} 個必選")
 
         col_save, col_del = st.columns([3, 1])
         with col_save:
