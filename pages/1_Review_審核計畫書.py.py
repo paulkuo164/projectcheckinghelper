@@ -19,6 +19,8 @@ def _save_record(filename, standard, result):
         "standard": standard,
         "verdict": result.get("verdict", ""),
         "summary": result.get("summary", ""),
+        "items": result.get("items", []),
+        "missing_items": result.get("missing_items", []),
     })
     with open(record_path, "w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
