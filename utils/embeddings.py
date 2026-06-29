@@ -61,6 +61,7 @@ def get_embedding(text: str, api_key: str) -> list[float]:
     payload = {
         "model": "models/text-embedding-004",
         "content": {"parts": [{"text": text[:8000]}]},
+        "taskType": "RETRIEVAL_DOCUMENT",
     }
     resp = requests.post(url, json=payload, timeout=30)
     resp.raise_for_status()
