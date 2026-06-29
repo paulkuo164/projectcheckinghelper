@@ -95,10 +95,71 @@ with col_letter:
 
 st.markdown("---")
 
+# ── 章節勾選 + 補充說明 ───────────────────────────────────────────────────
+selected_criteria = []
+if selected_standard and standards:
+    standard_obj_preview = next((s for s in standards if s["name"] == selected_standard), None)
+    if standard_obj_preview:
+        criteria_all = standard_obj_preview.get("criteria", [])
+
+        col_check, col_note = st.columns([1, 1])
+
+        with col_check:
+            st.subheader("📋 選擇審核章節")
+
+            btn_col1, btn_col2 = st.columns(2)
+            with btn_col1:
+                if st.button("全選", use_container_width=True):
+                    for i, c in enumerate(criteria_all):
+                        if not c.get("required", i == 0):
+                            st.session_state[f"crit_check_{i}"] = True
+            with btn_col2:
+                if st.button("僅必選", use_container_width=True):
+                    for i, c in enumerate(criteria_all):
+                        if not c.get("required", i == 0):
+                            st.session_state[f"crit_check_{i}"] = False
+
+            st.markdown("")
+            for i, c in enumerate(criteria_all):
+                is_required = c.get("required", i == 0)
+                if is_required:
+                    st.checkbox(
+                        f"🔒 {c['name']}",
+                        value=True,
+                        disabled=True,
+                        key=f"crit_locked_{i}",
+                        help="必選項目，已在審核標準中設定為強制納入"
+                    )
+                    selected_criteria.append(c)
+                else:
+                    checked = st.checkbox(
+                        c["name"],
+                        value=st.session_state.get(f"crit_check_{i}", True),
+                        key=f"crit_check_{i}",
+                    )
+                    if checked:
+                        selected_criteria.append(c)
+
+            st.caption(f"已選 **{len(selected_criteria)}** / {len(criteria_all)} 項")
+
+        with col_note:
+            st.subheader("📝 補充說明")
+            extra_note = st.text_area(
+                "額外審查重點（選填）",
+                height=220,
+                placeholder="例如：\n- 本案為新北市安康段，請特別注意液化潛勢區施工規定\n- 廠商上次被要求補件的項目為品管人員資格，本次請加強審查\n- 本次計畫書版本為修正三版，請確認版次命名是否正確",
+                help="這裡輸入的內容會附加在每個審核項目的 prompt 中，讓 AI 特別注意",
+                key="extra_note",
+                label_visibility="collapsed",
+            )
+            st.caption("此欄位會傳給所有審核項目的 AI，提醒特別注意事項。")
+
+st.markdown("---")
+
 # ── 執行按鈕 ──────────────────────────────────────────────────────────────
 plan_ready   = "plan_bytes" in st.session_state
 letter_ready = "letter_text" in st.session_state
-can_run = bool(api_key and selected_standard and plan_ready)
+can_run = bool(api_key and selected_standard and plan_ready and selected_criteria)
 
 col_btn, col_hint = st.columns([1, 3])
 with col_btn:
@@ -110,13 +171,23 @@ with col_hint:
         st.warning("請先選擇審核標準")
     elif not plan_ready:
         st.warning("請上傳計畫書")
+    elif not selected_criteria:
+        st.warning("請至少選擇一個審核項目")
     elif not letter_ready:
         st.info("（未上傳來文，將略過公文回覆產生）")
 
 # ── 審核執行 ──────────────────────────────────────────────────────────────
 if run and can_run:
     standard_obj = next(s for s in standards if s["name"] == selected_standard)
-    n_criteria = len(standard_obj.get("criteria", []))
+    extra_note = st.session_state.get("extra_note", "").strip()
+
+    standard_selected = {
+        "name": standard_obj["name"],
+        "description": standard_obj.get("description", ""),
+        "criteria": selected_criteria,
+        "extra_note": extra_note,
+    }
+    n_criteria = len(selected_criteria)
     hint = f"共 {n_criteria} 項，逐項精細審查"
 
     with st.spinner(f"Step 1：解析目錄章節中…"):
@@ -198,6 +269,11 @@ if result:
                 f"{icon} {item.get('criterion','—')}　{status}　（{len(issues)} 個問題・{len(conform)} 個符合依據）",
                 expanded=(status in ("不符合", "部分符合")),
             ):
+                # 引用規範標籤
+                cited = item.get("regulations_cited", [])
+                if cited:
+                    st.caption("📎 引用規範：" + "　".join(f"`{c}`" for c in cited))
+
                 # 審查總結
                 summary = item.get("summary")
                 if summary:
