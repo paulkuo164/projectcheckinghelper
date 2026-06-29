@@ -194,7 +194,7 @@ if run and can_run:
         result = review_plan(
             file_bytes=st.session_state["plan_bytes"],
             file_mime=st.session_state["plan_mime"],
-            standard=standard_obj,
+            standard=standard_selected,
             api_key=api_key,
         )
 
