@@ -246,7 +246,7 @@ def _extract_toc(file_uri: str, file_mime: str, api_key: str) -> dict:
         "generationConfig": {
             "temperature": 0.0,
             "responseMimeType": "application/json",
-            "maxOutputTokens": 4096,
+            "maxOutputTokens": 65536,
         },
     }
     resp = requests.post(url, json=payload, timeout=60)
@@ -353,10 +353,11 @@ def _review_single_item(
 }}
 
 注意：
-1. evidence 至少填 1 筆，最多 5 筆
+1. evidence 至少填 1 筆，最多 3 筆
 2. 若有提供相關規範條文，請在 summary 和 evidence 中具體對照引用
 3. regulations_cited 填入實際有引用到的規範名稱
 4. 頁碼請直接參考附件文件的實際頁碼
+5. summary 限 100 字以內，description 每筆限 80 字以內
 """
 
     url = (
@@ -374,7 +375,7 @@ def _review_single_item(
         "generationConfig": {
             "temperature": 0.2,
             "responseMimeType": "application/json",
-            "maxOutputTokens": 4096,
+            "maxOutputTokens": 65536,
         },
     }
 
