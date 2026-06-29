@@ -256,31 +256,84 @@ def _extract_toc(file_uri: str, file_mime: str, api_key: str) -> dict:
     return json.loads(raw)
 
 
-def _match_chapter(criterion_name: str, chapters: list) -> dict | None:
+def _build_chapter_embeddings(chapters: list, api_key: str) -> list:
     """
-    將審核項目名稱對應到最相關的章節。
-    用關鍵字比對，找不到則回傳 None（代表送全文審查）。
+    將所有章節標題向量化，回傳帶有 embedding 的 chapters 清單。
+    失敗時回傳原始 chapters（退回關鍵字比對）。
     """
-    name = criterion_name.lower()
-    # 移除編號前綴（如「1. 」「10. 」）
-    import re
-    name_clean = re.sub(r'^\d+[\.\s]+', '', name).strip()
+    from utils.embeddings import get_embedding
+    result = []
+    for ch in chapters:
+        try:
+            emb = get_embedding(ch.get("title", ""), api_key)
+            result.append({**ch, "embedding": emb})
+        except Exception:
+            result.append(ch)
+    return result
 
+
+def _cosine_similarity(a: list, b: list) -> float:
+    """計算兩個向量的餘弦相似度。"""
+    import math
+    dot   = sum(x * y for x, y in zip(a, b))
+    mag_a = math.sqrt(sum(x * x for x in a))
+    mag_b = math.sqrt(sum(x * x for x in b))
+    if mag_a == 0 or mag_b == 0:
+        return 0.0
+    return dot / (mag_a * mag_b)
+
+
+def _match_chapter(
+    criterion_name: str,
+    criterion_desc: str,
+    chapters: list,
+    api_key: str,
+) -> dict | None:
+    """
+    將審核項目對應到最相關的章節。
+    優先用向量相似度比對；若章節沒有 embedding 則退回關鍵字比對。
+    相似度低於閾值時回傳 None（代表送全文審查）。
+    """
+    from utils.embeddings import get_embedding
+    import re
+
+    # 查詢向量：用項目名稱 + 前 50 字描述
+    query_text = f"{criterion_name} {criterion_desc[:50]}"
+
+    # 判斷章節是否已向量化
+    has_embeddings = any("embedding" in ch for ch in chapters)
+
+    if has_embeddings:
+        # 向量比對
+        try:
+            query_emb = get_embedding(query_text, api_key)
+            best = None
+            best_score = 0.0
+            for ch in chapters:
+                if "embedding" not in ch:
+                    continue
+                score = _cosine_similarity(query_emb, ch["embedding"])
+                if score > best_score:
+                    best_score = score
+                    best = ch
+            # 相似度低於 0.6 視為無對應章節
+            if best_score < 0.6:
+                return None
+            return best
+        except Exception:
+            pass  # 失敗則退回關鍵字比對
+
+    # 退回關鍵字比對
+    name_clean = re.sub(r'^\d+[\.\s]+', '', criterion_name.lower()).strip()
     best = None
     best_score = 0
     for ch in chapters:
-        title = ch.get("title", "").lower()
-        title_clean = re.sub(r'^\d+[\.\s]+', '', title).strip()
-        # 計算相似度：共同字元數
+        title_clean = re.sub(r'^\d+[\.\s]+', '', ch.get("title", "").lower()).strip()
         common = sum(1 for c in name_clean if c in title_clean)
         if common > best_score:
             best_score = common
             best = ch
-
-    # 相似度太低就不對應（送全文）
-    if best_score < 2:
-        return None
-    return best
+    return best if best_score >= 2 else None
 
 
 def _review_single_item(
@@ -320,7 +373,37 @@ def _review_single_item(
 
     extra_note_section = f"\n\n## 審查人員補充說明（請特別注意）：\n{extra_note}" if extra_note else ""
 
-    prompt = f"""你是一位專業的計畫書審查委員，請針對以下單一審核項目進行精細審查。
+    prompt = f"""你是一位專業的監造計畫書審查委員，具備台灣公共工程品質管理與職業安全衛生的專業知識。請依照以下審查通則與審核項目，對計畫書進行精細審查。
+
+## 【審查通則】（適用所有項目）
+
+### 表格與附件審查
+- 計畫書中若附有表格（如品管表單、人員名冊、檢驗停留點表、抽查紀錄表等），必須確認表格格式是否符合對應規範要求（如 EM-1020-A、EM-1021-A 等），欄位是否完整，不得僅有標題而無實質內容
+- 組織架構圖需確認層級關係清楚，人員職稱與職責是否對應，不得為空白示意圖
+- 流程圖需確認各步驟完整，決策點與回饋機制是否存在
+
+### 規範引用審查
+- 凡計畫書引用法規條號（如「依職業安全衛生法第 XX 條」）或手冊編號（如 EM-1020、EM-3020），必須確認引用是否正確，不得引用已廢止或錯誤條文
+- 若計畫書提及「依相關規定辦理」而未具體列明，應視為不完整，需指出應明確引用的規範
+- 版次、日期、核定編號等資訊需與現行版本一致
+
+### 內容實質性審查
+- 審查重點在於內容是否具體可執行，不接受僅有原則性說明而無具體作法
+- 例如：「定期召開會議」需說明頻率；「進行抽查」需說明抽查項目、頻率、判定標準
+- 人員資格需附上具體條件（年資、證書類別、有效期限），不得僅寫「具相關經驗」
+- 計畫期間、負責人員、執行頻率三要素缺一不可
+
+### 一致性審查
+- 計畫書各章節之間的人員姓名、單位名稱、工期、日期需前後一致
+- 若發現矛盾（如不同章節記載不同的開工日期），應明確指出頁碼與矛盾內容
+- 附件表單中的資訊需與正文說明相符
+
+### 版次審查
+- 確認版次命名是否符合規定（初版、修正一版、修正二版…）
+- 版次進版需有合理原因（展延核定、免計工期核定等），不得無故修改
+- 每頁頁首/頁尾的版次與日期需與封面一致
+
+---
 
 ## 審核標準：{standard_name}
 
@@ -357,7 +440,8 @@ def _review_single_item(
 2. 若有提供相關規範條文，請在 summary 和 evidence 中具體對照引用
 3. regulations_cited 填入實際有引用到的規範名稱
 4. 頁碼請直接參考附件文件的實際頁碼
-5. summary 限 100 字以內，description 每筆限 80 字以內
+5. summary 限 150 字以內，description 每筆限 100 字以內
+6. 依據審查通則，特別注意表格格式、規範引用正確性、內容實質性、前後一致性
 """
 
     url = (
@@ -401,7 +485,8 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
     """
     Chunk 審核流程：
     Step 1：AI 解析目錄，建立章節與頁碼對應表
-    Step 2：每個審核項目各自對應章節，單獨精細審查
+    Step 1.5：將章節標題向量化，供語意比對使用
+    Step 2：每個審核項目用向量比對找對應章節，單獨精細審查
     """
     # 上傳檔案
     try:
@@ -414,17 +499,28 @@ def review_plan(file_bytes: bytes, file_mime: str, standard: dict, api_key: str)
         toc = _extract_toc(file_uri, file_mime, api_key)
         chapters = toc.get("chapters", [])
     except Exception:
-        chapters = []  # 解析失敗就全部送全文審查
+        chapters = []
+
+    # Step 1.5：章節標題向量化
+    if chapters:
+        try:
+            chapters = _build_chapter_embeddings(chapters, api_key)
+        except Exception:
+            pass  # 向量化失敗退回關鍵字比對
 
     criteria_all = standard.get("criteria", [])
-    all_items = []
-    all_missing = []
+    all_items    = []
+    all_missing  = []
+    extra_note   = standard.get("extra_note", "")
 
     # Step 2：逐項審查
-    extra_note = standard.get("extra_note", "")
-
     for criterion in criteria_all:
-        chapter = _match_chapter(criterion["name"], chapters)
+        chapter = _match_chapter(
+            criterion_name=criterion["name"],
+            criterion_desc=criterion.get("description", ""),
+            chapters=chapters,
+            api_key=api_key,
+        )
         try:
             item = _review_single_item(
                 criterion=criterion,
