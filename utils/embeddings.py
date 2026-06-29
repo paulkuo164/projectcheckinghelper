@@ -10,10 +10,17 @@ def _get_supabase_config():
     try:
         url = st.secrets["SUPABASE_URL"]
         key = st.secrets["SUPABASE_KEY"]
-    except Exception:
+        if not url or not key:
+            raise ValueError("SUPABASE_URL 或 SUPABASE_KEY 為空")
+        return url.rstrip("/"), key
+    except Exception as e:
         url = os.environ.get("SUPABASE_URL", "")
         key = os.environ.get("SUPABASE_KEY", "")
-    return url, key
+        if not url or not key:
+            raise RuntimeError(
+                f"找不到 Supabase 設定，請確認 Streamlit Secrets 已設定 SUPABASE_URL 和 SUPABASE_KEY。錯誤：{e}"
+            )
+        return url.rstrip("/"), key
 
 
 def _supabase_request(method: str, path: str, body=None) -> dict:
@@ -127,6 +134,11 @@ def upload_regulation(
     for i, chunk in enumerate(chunks):
         try:
             embedding = get_embedding(chunk, api_key)
+
+            # 確認維度
+            if len(embedding) != 768:
+                return {"ok": False, "error": f"向量維度不符：API 回傳 {len(embedding)} 維，資料表需要 768 維。請在 Supabase SQL Editor 重建資料表。"}
+
             row = {
                 "doc_name": doc_name,
                 "chunk_index": i,
@@ -134,12 +146,12 @@ def upload_regulation(
                 "embedding": embedding,
                 "metadata": {"chunk_total": total},
             }
-            _supabase_request("POST", "regulations", row)
+            resp = _supabase_request("POST", "regulations", row)
             inserted += 1
             if progress_callback:
                 progress_callback(i + 1, total)
         except Exception as e:
-            return {"ok": False, "error": f"第 {i+1} 個 chunk 失敗：{e}"}
+            return {"ok": False, "error": f"第 {i+1} 個 chunk 失敗：{e}｜向量長度：{len(embedding) if 'embedding' in dir() else '未知'}"}
 
     return {"ok": True, "chunks": inserted}
 
