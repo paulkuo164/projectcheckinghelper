@@ -1,6 +1,16 @@
 import json
 import requests
 
+# ── 統一在這裡管理模型；三個函式共用，日後換模型只改這一行 ──
+MODEL = "gemini-2.5-flash"  # 舊的 gemini-1.5-flash / gemini-2.0-flash 已停用，會回 404
+
+
+def _api_url(api_key: str) -> str:
+    return (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{MODEL}:generateContent?key={api_key}"
+    )
+
 
 def parse_standard_from_text(rule_text: str, api_key: str) -> dict:
     """
@@ -36,11 +46,7 @@ def parse_standard_from_text(rule_text: str, api_key: str) -> dict:
 5. 若文件中有明確評分或加權，請在 description 中標注
 """
 
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        "gemini-1.5-flash:generateContent"
-        f"?key={api_key}"
-    )
+    url = _api_url(api_key)
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -113,11 +119,7 @@ def generate_reply_letter(
 5. 直接輸出公文全文，不要加任何說明或前言
 """
 
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        "gemini-1.5-flash:generateContent"
-        f"?key={api_key}"
-    )
+    url = _api_url(api_key)
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.3},
@@ -134,13 +136,32 @@ def generate_reply_letter(
         return f"[公文產生失敗] {e}"
 
 
+def _format_criterion(c: dict) -> str:
+    """
+    把單一審核項目組成 prompt 文字。
+    - max_score 用 .get 取，預設 10，避免新版 standards.json（無 max_score）時 KeyError。
+    - 若該項目有 reference_forms，一併附上，並加上「嚴禁臆測」指令。
+    """
+    ms = c.get("max_score", 10)
+    text = f"- 【{c['name']}】（滿分 {ms} 分）：{c.get('description', '')}"
+
+    forms = c.get("reference_forms", [])
+    if forms:
+        forms_list = "；".join(forms)
+        text += (
+            f"\n  ＊參考表單（未出現即據實回報，嚴禁臆測，不得推測或自行補齊）：{forms_list}"
+        )
+    return text
+
+
 def review_plan(doc_text: str, standard: dict, api_key: str) -> dict:
     """
     呼叫 Gemini API，依據審核標準對計畫書文字進行審核。
     支援大量審核項目：每批最多 15 項，分批送審後合併結果。
     """
     criteria_all = standard.get("criteria", [])
-    max_total = sum(c.get("max_score", 0) for c in criteria_all)
+    # max_score 一律用 .get 預設 10，相容「有評分」與「無評分（新版）」兩種 standards.json
+    max_total = sum(c.get("max_score", 10) for c in criteria_all)
     BATCH_SIZE = 15
 
     all_items = []
@@ -149,11 +170,7 @@ def review_plan(doc_text: str, standard: dict, api_key: str) -> dict:
     # 分批審核
     for batch_start in range(0, len(criteria_all), BATCH_SIZE):
         batch = criteria_all[batch_start: batch_start + BATCH_SIZE]
-        criteria_text = "\n".join([
-            f"- 【{c['name']}】（滿分 {c['max_score']} 分）：{c.get('description', '')}"
-            for c in batch
-        ])
-        batch_max = sum(c.get("max_score", 0) for c in batch)
+        criteria_text = "\n".join(_format_criterion(c) for c in batch)
 
         prompt = f"""你是一位專業的計畫書審查委員。請依照以下審核項目，仔細審查計畫書內容，輸出 JSON 格式的審核結果。
 
@@ -185,14 +202,13 @@ def review_plan(doc_text: str, standard: dict, api_key: str) -> dict:
   "missing_items": ["<需補件事項，如無則空陣列>"]
 }}
 
-注意：items 數量必須與本批次審核項目數量完全一致（{len(batch)} 筆），每項都必須給分。
+注意：
+1. items 數量必須與本批次審核項目數量完全一致（{len(batch)} 筆），每項都必須給分。
+2. 若審核項目附有「參考表單」，請逐一比對計畫書中是否實際出現或引用該表單；
+   未出現的表單請據實寫入該項 comment 或 missing，嚴禁臆測、不得自行補齊不存在的表單。
 """
 
-        url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            "gemini-1.5-flash:generateContent"
-            f"?key={api_key}"
-        )
+        url = _api_url(api_key)
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
@@ -240,4 +256,3 @@ def review_plan(doc_text: str, standard: dict, api_key: str) -> dict:
         "items": all_items,
         "missing_items": unique_missing,
     }
-
